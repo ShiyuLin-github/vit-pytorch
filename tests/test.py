@@ -1,5 +1,6 @@
 import torch
 from vit_pytorch import ViT
+from vit_pytorch.vit_3d import ViT
 
 def test():
     v = ViT(

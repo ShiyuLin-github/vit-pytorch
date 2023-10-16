@@ -77,11 +77,11 @@ class Transformer(nn.Module):
 class ViT(nn.Module):
     def __init__(self, *, image_size, image_patch_size, frames, frame_patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
         super().__init__()
-        image_height, image_width = pair(image_size)
+        image_height, image_width = pair(image_size) #pair 函数用于从一个给定的数值或元组中提取两个值，并将它们分配给两个不同的变量。在上面的代码片段中，pair 函数被用来从图像尺寸和图像patch尺寸中提取高度和宽度。
         patch_height, patch_width = pair(image_patch_size)
 
         assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
-        assert frames % frame_patch_size == 0, 'Frames must be divisible by frame patch size'
+        assert frames % frame_patch_size == 0, 'Frames must be divisible by frame patch size' #确保尺寸能被整除
 
         num_patches = (image_height // patch_height) * (image_width // patch_width) * (frames // frame_patch_size)
         patch_dim = channels * patch_height * patch_width * frame_patch_size
@@ -89,10 +89,10 @@ class ViT(nn.Module):
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
         self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (f pf) (h p1) (w p2) -> b (f h w) (p1 p2 pf c)', p1 = patch_height, p2 = patch_width, pf = frame_patch_size),
+            Rearrange('b c (f pf) (h p1) (w p2) -> b (f h w) (p1 p2 pf c)', p1 = patch_height, p2 = patch_width, pf = frame_patch_size), #'b c (f pf) (h p1) (w p2) -> b (f h w) (p1 p2 pf c)' 是 Rearrange 函数的格式字符串，用于指定如何重新排列输入数据的维度。这个字符串描述了从输入张量到输出张量的映射方式。
             nn.LayerNorm(patch_dim),
-            nn.Linear(patch_dim, dim),
-            nn.LayerNorm(dim),
+            nn.Linear(patch_dim, dim), #示将输入的 patch_dim 维度特征线性映射到 dim 维度特征
+            nn.LayerNorm(dim), #LayerNorm层具体操作：使用计算得到的均值和标准差来标准化每个样本，即每个样本减去均值，除以方差
         )
 
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
