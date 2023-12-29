@@ -7,7 +7,7 @@ from einops.layers.torch import Rearrange
 # helpers
 
 def pair(t):
-    return t if isinstance(t, tuple) else (t, t) #pair函数：这是一个辅助函数，用于从一个数值或元组中提取两个值。它将确保给定的值被分配给两个不同的变量，通常用于处理图像尺寸和patch尺寸的输入。
+    return t if isinstance(t, tuple) else (t, t) #pair函数：这是一个辅助函数，用于从一个数值或元组中提取两个值。它将确保给定的值被分配给两个不同的变量，通常用于处理图像尺寸和patch尺寸的输入。其作用是将输入 t 转换为一个元组，如果 t 已经是元组，则保持不变，否则创建一个包含两个相同元素的元组 (t, t)。
 
 # classes
 
@@ -29,7 +29,7 @@ class Attention(nn.Module): #这是注意力机制模块，用于计算注意力
     def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
         super().__init__()
         inner_dim = dim_head *  heads
-        project_out = not (heads == 1 and dim_head == dim) #project_out：一个布尔值，指示是否需要将注意力输出映射回原始维度
+        project_out = not (heads == 1 and dim_head == dim) #project_out：一个布尔值，指示是否需要将注意力输出映射回原始维度，当heads=1且dim_head=dim时返回true，not一下返回false，其他情况都是true
 
         self.heads = heads
         self.scale = dim_head ** -0.5 #理论部分的除权数，通过缩放因子，确保注意力分布的尺度适当
@@ -48,15 +48,17 @@ class Attention(nn.Module): #这是注意力机制模块，用于计算注意力
     def forward(self, x):
         x = self.norm(x)
         qkv = self.to_qkv(x).chunk(3, dim = -1) # 通过 chunk(3, dim=-1) 将 qkv 分成三部分 x = torch.randn(2, 10) chunks = x.chunk(2, dim=1)  # 在维度1上分割成2个块 # chunks[0] 包含 x 的前5列，chunks[1] 包含 x 的后5列
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv) #map 是一个Python内置函数，它的主要作用是将一个函数应用于可迭代对象（如列表、元组等），并返回一个包含函数应用结果的新可迭代对象。
 
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv) #map 是一个Python内置函数，它的主要作用是将一个函数应用于可迭代对象（如列表、元组等），并返回一个包含函数应用结果的新可迭代对象。map(function here, iterable here); lambda [arg1 [,arg2,.....argn]]:expression
+        # 先是用lambda函数建了个匿名函数:对t进行rearrange, 再将lambda用map套用到qkv上，将每个qkv变为4维
+
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale # 矩阵转置的意义在于把i变为j，j变为i，这里本可以直接.T的，但应该是为了保险设置为让矩阵的最后一维和倒数第二个维度进行交换
 
         attn = self.attend(dots)
         attn = self.dropout(attn)
 
         out = torch.matmul(attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
+        out = rearrange(out, 'b h n d -> b n (h d)') # 转回之前的尺寸方便进行下一步循环
         return self.to_out(out)
 
 class Transformer(nn.Module):
@@ -72,7 +74,7 @@ class Transformer(nn.Module):
         for attn, ff in self.layers:
             x = attn(x) + x
             x = ff(x) + x
-        return x
+        return x # 设置循环层数的迭代，这里的累加是为了达到类似resnet的效果
 
 class ViT(nn.Module):
     def __init__(self, *, image_size, image_patch_size, frames, frame_patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
@@ -96,7 +98,8 @@ class ViT(nn.Module):
             nn.LayerNorm(dim), #LayerNorm层具体操作：使用计算得到的均值和标准差来标准化每个样本，即每个样本减去均值，除以方差
         )
 
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim)) #nn.Parameter 允许将张量标记为模型的参数，使其能够参与训练，并在反向传播时进行更新。这是构建深度学习模型和训练它们的重要组成部分。self.pos_embedding 是一个可学习的参数，用于捕捉位置信息。它的形状是 (1, num_patches + 1, dim)，其中 num_patches 表示输入图像被划分成的图像块的数量，加 1 是为了额外的位置嵌入（通常用于类别标记）。这些位置嵌入将被加到输入嵌入中，以帮助模型理解每个图像块的位置信息。
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim)) #nn.Parameter 允许将张量标记为模型的参数，使其能够参与训练，并在反向传播时进行更新。它的形状是 (1, num_patches + 1, dim)，其中 num_patches 表示输入图像被划分成的图像块的数量，加 1 是为了算上cls_tokens(参下方代码)。dim 是 patch_embedding 的dimension，最后patch与pos相加以此保留位置信息。
+
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim)) #self.cls_token 也是一个可学习的参数，用于表示一个额外的类别标记。它的形状是 (1, 1, dim)，其中 dim 是Transformer的输入和输出维度。这个类别标记通常与图像块的表示连接在一起，以捕获全局信息。
         self.dropout = nn.Dropout(emb_dropout) #self.dropout 是一个Dropout层，用于在输入嵌入上应用丢弃操作。丢弃操作有助于防止过拟合，它以概率 emb_dropout 随机将输入中的一些元素设置为零。
 
@@ -111,17 +114,17 @@ class ViT(nn.Module):
         )
 
     def forward(self, video):
-        x = self.to_patch_embedding(video)
+        x = self.to_patch_embedding(video) # video经过embedding变为'b c (f pf) (h p1) (w p2) -> b (f h w) (p1 p2 pf c)'
         b, n, _ = x.shape
 
-        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
-        x = torch.cat((cls_tokens, x), dim=1)
-        x += self.pos_embedding[:, :(n + 1)]
+        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b) # 用repeat函数复制cls_tokens的维度为b 1 d，反正也是随机的，为啥一开始不直接这样，难道是因为不知道 batch_size?
+        x = torch.cat((cls_tokens, x), dim=1) # x.shape从[b,n,-]变为[b,n+1,-]
+        x += self.pos_embedding[:, :(n + 1)] # x=x+pos_embedding
         x = self.dropout(x)
 
         x = self.transformer(x)
 
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0] # 如果mean则取tranformer的均值，否则取第一个
 
-        x = self.to_latent(x)
+        x = self.to_latent(x) # 不清楚作用
         return self.mlp_head(x)
