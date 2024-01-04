@@ -32,7 +32,7 @@ class Attention(nn.Module): #这是注意力机制模块，用于计算注意力
         project_out = not (heads == 1 and dim_head == dim) #project_out：一个布尔值，指示是否需要将注意力输出映射回原始维度，当heads=1且dim_head=dim时返回true，not一下返回false，其他情况都是true
 
         self.heads = heads
-        self.scale = dim_head ** -0.5 #理论部分的除权数，通过缩放因子，确保注意力分布的尺度适当
+        self.scale = dim_head ** -0.5 #理论部分的除权数，通过缩放因子，确保注意力分布的尺度适当，从这个角度考虑dim_head是K的维度
 
         self.norm = nn.LayerNorm(dim)
         self.attend = nn.Softmax(dim = -1) #dim=-1意味着对最后一个维度进行softmax计算
@@ -47,7 +47,7 @@ class Attention(nn.Module): #这是注意力机制模块，用于计算注意力
 
     def forward(self, x):
         x = self.norm(x)
-        qkv = self.to_qkv(x).chunk(3, dim = -1) # 通过 chunk(3, dim=-1) 将 qkv 分成三部分 x = torch.randn(2, 10) chunks = x.chunk(2, dim=1)  # 在维度1上分割成2个块 # chunks[0] 包含 x 的前5列，chunks[1] 包含 x 的后5列
+        qkv = self.to_qkv(x).chunk(3, dim = -1) # 通过 chunk(3, dim=-1) 将 qkv 分成三部分。q是[b,n,]
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv) #map 是一个Python内置函数，它的主要作用是将一个函数应用于可迭代对象（如列表、元组等），并返回一个包含函数应用结果的新可迭代对象。map(function here, iterable here); lambda [arg1 [,arg2,.....argn]]:expression
         # 先是用lambda函数建了个匿名函数:对t进行rearrange, 再将lambda用map套用到qkv上，将每个qkv变为4维
