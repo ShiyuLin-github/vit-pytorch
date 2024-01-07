@@ -46,19 +46,21 @@ class Attention(nn.Module): #这是注意力机制模块，用于计算注意力
         ) if project_out else nn.Identity() #nn.Identity() 不对输入进行任何变换，只是将输入复制到输出。
 
     def forward(self, x):
-        x = self.norm(x)
-        qkv = self.to_qkv(x).chunk(3, dim = -1) # 通过 chunk(3, dim=-1) 将 qkv 分成三部分。q是[b,n,]
+        x = self.norm(x) # x[b, n+1, dim] [4, 309, 1024]
+        qkv = self.to_qkv(x).chunk(3, dim = -1) # 通过 chunk(3, dim=-1) 将 qkv 分成三部分。q是[b, 309, 512]其中512=dim_heads(64) * heads(8),k与v同，qkv是len=3的tensor里面包含q,k,v
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv) #map 是一个Python内置函数，它的主要作用是将一个函数应用于可迭代对象（如列表、元组等），并返回一个包含函数应用结果的新可迭代对象。map(function here, iterable here); lambda [arg1 [,arg2,.....argn]]:expression
         # 先是用lambda函数建了个匿名函数:对t进行rearrange, 再将lambda用map套用到qkv上，将每个qkv变为4维
+        # q[b, 8, 309, 64] 其中8=heads，64=head_dim 又把融合在一起的矩阵给拆开
 
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale # 矩阵转置的意义在于把i变为j，j变为i，这里本可以直接.T的，但应该是为了保险设置为让矩阵的最后一维和倒数第二个维度进行交换
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale # 矩阵转置的意义在于把i变为j，j变为i，这里本可以直接.T的，但应该是为了保险设置为让矩阵的最后一维和倒数第二个维度进行交换，如果是4维的矩阵，这里定义转置的维度是有意义的所有不直接.T也有道理
+        # dots[b, heads, n+1, n+1]  [b, 8, 309, 309],最后的[309,309]代表每个patch与每个patch直接的关系矩阵
 
-        attn = self.attend(dots)
-        attn = self.dropout(attn)
+        attn = self.attend(dots) # attn[b, heads, n+1, n+1] shape同上，进行了一次softmax归一化
+        attn = self.dropout(attn) # same as before
 
-        out = torch.matmul(attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)') # 转回之前的尺寸方便进行下一步循环
+        out = torch.matmul(attn, v) # out[b, heads, n+1, dim_head] [4, 8, 309, 64] 对最后的矩阵计算相乘相加的点乘操作得出注意力分数维度为dim_head
+        out = rearrange(out, 'b h n d -> b n (h d)') # 转回之前的尺寸方便进行下一步循环 #[4, 309, 512]
         return self.to_out(out)
 
 class Transformer(nn.Module):
@@ -114,17 +116,17 @@ class ViT(nn.Module):
         )
 
     def forward(self, video):
-        x = self.to_patch_embedding(video) # video经过embedding变为'b c (f pf) (h p1) (w p2) -> b (f h w) (p1 p2 pf c)'
-        b, n, _ = x.shape
+        x = self.to_patch_embedding(video) # video[b,c,154,240,240]--> x[b, 308, 1024]' dim=1024, 308是n也就是一共有多少个patch
+        b, n, _ = x.shape # b n dim
 
-        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b) # 用repeat函数复制cls_tokens的维度为b 1 d，反正也是随机的，为啥一开始不直接这样，难道是因为不知道 batch_size?
-        x = torch.cat((cls_tokens, x), dim=1) # x.shape从[b,n,-]变为[b,n+1,-]
-        x += self.pos_embedding[:, :(n + 1)] # x=x+pos_embedding
-        x = self.dropout(x)
+        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b) # cls_token[b, 1, dim=1024]  用repeat函数复制cls_tokens的维度为b 1 d，反正也是随机的，为啥一开始不直接这样，难道是因为不知道 batch_size?
+        x = torch.cat((cls_tokens, x), dim=1) # x.shape从[b,n,-]变为[b,n+1,-],[b,308,1024]-->[b,309,1024]
+        x += self.pos_embedding[:, :(n + 1)] # pos_embedding[1, 309, 1024],后面这个[:, :(n + 1)]应该只是为了不出bug,+=的时候用到了广播机制扩展到batch_size的维度上
+        x = self.dropout(x) # same as before
 
-        x = self.transformer(x)
+        x = self.transformer(x) # same as before [b, n+1, dim] [4, 309, 1024]
 
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0] # 如果mean则取tranformer的均值，否则取第一个
+        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0] # [b, dim] [b, 1024] 如果mean则取tranformer的均值，否则取第一个
 
         x = self.to_latent(x) # 不清楚作用
         return self.mlp_head(x)
